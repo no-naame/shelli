@@ -25,7 +25,9 @@ SOURCES = $(SRCDIR)/main.c \
           $(TUIDIR)/tui_render.c \
           $(TUIDIR)/tui_widgets.c \
           $(TUIDIR)/tui_theme.c \
-          $(TUIDIR)/tui_logo.c
+          $(TUIDIR)/tui_logo.c \
+          $(TUIDIR)/tui_anim.c \
+          $(TUIDIR)/tui_icons.c
 
 HEADERS = $(SRCDIR)/lexer.h \
           $(SRCDIR)/parser.h \
@@ -45,7 +47,9 @@ OBJECTS = $(OBJDIR)/main.o \
           $(OBJDIR)/tui_render.o \
           $(OBJDIR)/tui_widgets.o \
           $(OBJDIR)/tui_theme.o \
-          $(OBJDIR)/tui_logo.o
+          $(OBJDIR)/tui_logo.o \
+          $(OBJDIR)/tui_anim.o \
+          $(OBJDIR)/tui_icons.o
 
 # Output binary
 TARGET = shelli
@@ -98,6 +102,12 @@ $(OBJDIR)/tui_theme.o: $(TUIDIR)/tui_theme.c $(TUIDIR)/tui.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/tui_logo.o: $(TUIDIR)/tui_logo.c $(TUIDIR)/tui.h | $(OBJDIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/tui_anim.o: $(TUIDIR)/tui_anim.c $(TUIDIR)/tui.h | $(OBJDIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(OBJDIR)/tui_icons.o: $(TUIDIR)/tui_icons.c $(TUIDIR)/tui.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Create build directory

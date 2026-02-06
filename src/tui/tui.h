@@ -58,6 +58,12 @@
 #define COL_TEAL       116    /* #94e2d5 - Types, special */
 #define COL_YELLOW     221    /* #f9e2af - Highlights */
 
+/* Neon Accents (for cyberpunk glow effects) */
+#define COL_NEON_PINK    213  /* #ff79c6 - Hot pink glow */
+#define COL_NEON_CYAN    123  /* #8be9fd - Electric cyan */
+#define COL_NEON_PURPLE  141  /* #bd93f9 - Soft purple */
+#define COL_MATRIX_GREEN 84   /* #50fa7b - Matrix green accent */
+
 /* ANSI color macros */
 #define FG(c)          CSI "38;5;" #c "m"
 #define BG(c)          CSI "48;5;" #c "m"
@@ -211,5 +217,81 @@ void tui_tick(void);
 
 /* Get spinner character for current frame */
 const char *tui_spinner_frame(int frame);
+
+/*
+ * ============================================================================
+ * Public API - Enhanced Animation System (tui_anim.c)
+ * ============================================================================
+ */
+
+/* Easing functions for smooth animations */
+float ease_out_cubic(float t);
+float ease_in_out_quad(float t);
+float ease_out_elastic(float t);
+float ease_linear(float t);
+
+/* Animation lifecycle */
+int anim_create(int type, const char *content, int x, int y, int frames);
+void anim_start(int anim_id);
+int anim_tick(int anim_id);
+void anim_render(int anim_id);
+int anim_is_complete(int anim_id);
+void anim_destroy(int anim_id);
+void anim_clear_all(void);
+
+/* Convenience blocking animations */
+void anim_fade_in_blocking(int x, int y, const char *content, int duration_ms);
+void anim_typewriter_blocking(int x, int y, const char *content, int duration_ms);
+
+/*
+ * ============================================================================
+ * Public API - Icons (tui_icons.c)
+ * ============================================================================
+ */
+
+/* Icon mode control */
+void icons_set_nerd_font(int enabled);
+int icons_nerd_font_enabled(void);
+
+/* Get icon by name */
+const char *icon_get(const char *name);
+
+/* Common icon accessors */
+const char *icon_terminal(void);
+const char *icon_keyword(void);
+const char *icon_struct(void);
+const char *icon_play(void);
+const char *icon_check(void);
+const char *icon_cog(void);
+const char *icon_folder(void);
+const char *icon_file(void);
+const char *icon_git(void);
+const char *icon_arrow_right(void);
+const char *icon_pipe(void);
+const char *icon_error(void);
+const char *icon_success(void);
+const char *icon_diamond(void);
+
+/* Print icon with color */
+void icon_print(const char *name, int color);
+void icon_print_label(const char *name, const char *label, int icon_color, int label_color);
+
+/*
+ * ============================================================================
+ * Public API - Theme Enhancements (tui_theme.c)
+ * ============================================================================
+ */
+
+/* Get neon accent colors */
+int theme_neon_pink(void);
+int theme_neon_cyan(void);
+int theme_neon_purple(void);
+int theme_matrix_green(void);
+
+/* Gradient helpers */
+int color_lerp(int c1, int c2, float t);
+int gradient_color(float pos);
+void print_gradient_text(const char *text);
+void print_gradient_custom(const char *text, const int *colors, int color_count);
 
 #endif /* TUI_H */

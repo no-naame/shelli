@@ -9,7 +9,7 @@
 #include "tui.h"
 
 /*
- * Box drawing characters (rounded corners)
+ * Box drawing characters (rounded corners - light)
  */
 #define BOX_TL "\342\225\255"  /* ╭ */
 #define BOX_TR "\342\225\256"  /* ╮ */
@@ -17,6 +17,23 @@
 #define BOX_BR "\342\225\257"  /* ╯ */
 #define BOX_H  "\342\224\200"  /* ─ */
 #define BOX_V  "\342\224\202"  /* │ */
+
+/*
+ * Heavy box drawing characters
+ */
+#define HEAVY_TL "\342\224\217"  /* ┏ */
+#define HEAVY_TR "\342\224\223"  /* ┓ */
+#define HEAVY_BL "\342\224\227"  /* ┗ */
+#define HEAVY_BR "\342\224\233"  /* ┛ */
+#define HEAVY_H  "\342\224\201"  /* ━ */
+#define HEAVY_V  "\342\224\203"  /* ┃ */
+
+/*
+ * Glow effect characters
+ */
+#define GLOW_1   "\342\226\221"  /* ░ */
+#define GLOW_2   "\342\226\222"  /* ▒ */
+#define GLOW_3   "\342\226\223"  /* ▓ */
 
 /*
  * Spinner frames (Braille pattern)
@@ -267,4 +284,125 @@ void widget_label_value(int x, int y, const char *label, const char *value,
 void widget_badge(int x, int y, const char *text, int fg_color, int bg_color) {
     widget_move(y, x);
     printf(CSI "38;5;%dm" CSI "48;5;%dm %s " COL_RESET, fg_color, bg_color, text);
+}
+
+/*
+ * Draw a heavy box (for outer frame)
+ */
+void widget_heavy_box(int x, int y, int width, int height, int color) {
+    /* Top border */
+    widget_move(y, x);
+    printf(CSI "38;5;%dm", color);
+    printf("%s", HEAVY_TL);
+    widget_hline(width - 2, HEAVY_H);
+    printf("%s" COL_RESET, HEAVY_TR);
+
+    /* Side borders */
+    for (int row = 1; row < height - 1; row++) {
+        widget_move(y + row, x);
+        printf(CSI "38;5;%dm%s" COL_RESET, color, HEAVY_V);
+        widget_move(y + row, x + width - 1);
+        printf(CSI "38;5;%dm%s" COL_RESET, color, HEAVY_V);
+    }
+
+    /* Bottom border */
+    widget_move(y + height - 1, x);
+    printf(CSI "38;5;%dm", color);
+    printf("%s", HEAVY_BL);
+    widget_hline(width - 2, HEAVY_H);
+    printf("%s" COL_RESET, HEAVY_BR);
+}
+
+/*
+ * Draw a glow box with gradient border effect
+ */
+void widget_glow_box(int x, int y, int width, int height, int inner_color, int glow_color) {
+    /* Draw glow layer (outer) */
+    widget_move(y - 1, x - 1);
+    printf(CSI "38;5;%dm", glow_color);
+    for (int i = 0; i < width + 2; i++) {
+        printf("%s", GLOW_1);
+    }
+    printf(COL_RESET);
+
+    for (int row = 0; row < height; row++) {
+        widget_move(y + row, x - 1);
+        printf(CSI "38;5;%dm%s" COL_RESET, glow_color, GLOW_2);
+        widget_move(y + row, x + width);
+        printf(CSI "38;5;%dm%s" COL_RESET, glow_color, GLOW_2);
+    }
+
+    widget_move(y + height, x - 1);
+    printf(CSI "38;5;%dm", glow_color);
+    for (int i = 0; i < width + 2; i++) {
+        printf("%s", GLOW_1);
+    }
+    printf(COL_RESET);
+
+    /* Draw inner box */
+    widget_box(x, y, width, height, NULL, inner_color);
+}
+
+/*
+ * Enhanced stage indicator with neon gradient
+ * Uses ◉ for filled, ◎ for empty, with heavy connectors ━━━━
+ */
+#define STAGE_FILLED   "\342\227\211"  /* ◉ */
+#define STAGE_EMPTY    "\342\227\216"  /* ◎ */
+#define STAGE_CONNECT  "\342\224\201\342\224\201\342\224\201\342\224\201"  /* ━━━━ */
+
+void widget_stages_v2(int x, int y, int stages, int current, int completed,
+                      const char **labels, const int *colors) {
+    (void)labels;  /* Labels drawn separately */
+    widget_move(y, x);
+
+    for (int i = 0; i < stages; i++) {
+        int is_complete = (completed >> i) & 1;
+        int is_current = (i == current);
+        int color = colors ? colors[i] : COL_BLUE;
+
+        /* Circle indicator */
+        if (is_complete) {
+            printf(CSI "38;5;%dm%s" COL_RESET, COL_MATRIX_GREEN, STAGE_FILLED);
+        } else if (is_current) {
+            printf(COL_BOLD CSI "38;5;%dm%s" COL_RESET, color, STAGE_FILLED);
+        } else {
+            printf(FG_OVERLAY "%s" COL_RESET, STAGE_EMPTY);
+        }
+
+        /* Connector (except for last) */
+        if (i < stages - 1) {
+            if (is_complete) {
+                printf(CSI "38;5;%dm %s " COL_RESET, COL_MATRIX_GREEN, STAGE_CONNECT);
+            } else if (is_current && colors) {
+                /* Gradient connector */
+                int c1 = colors[i];
+                int c2 = colors[i + 1];
+                printf(CSI "38;5;%dm " COL_RESET, c1);
+                printf(CSI "38;5;%dm%s%s" COL_RESET, c1, HEAVY_H, HEAVY_H);
+                printf(CSI "38;5;%dm%s%s" COL_RESET, c2, HEAVY_H, HEAVY_H);
+                printf(" ");
+            } else {
+                printf(FG_OVERLAY " %s " COL_RESET, STAGE_CONNECT);
+            }
+        }
+    }
+}
+
+/*
+ * Draw text with horizontal gradient
+ */
+void widget_gradient_text(int x, int y, const char *text, const int *colors, int color_count) {
+    int len = (int)strlen(text);
+    if (len == 0 || color_count == 0) return;
+
+    widget_move(y, x);
+
+    for (int i = 0; i < len; i++) {
+        /* Map character position to color index */
+        int color_idx = (i * (color_count - 1)) / (len > 1 ? len - 1 : 1);
+        if (color_idx >= color_count) color_idx = color_count - 1;
+
+        printf(CSI "38;5;%dm%c" COL_RESET, colors[color_idx], text[i]);
+    }
 }

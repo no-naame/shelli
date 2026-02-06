@@ -158,10 +158,11 @@ int main(int argc, char *argv[]) {
                 tui_log_exec("builtin: exit");
                 tui_show_result(last_exit, "Goodbye!");
             } else {
-                /* Execute */
+                /* Execute with output capture */
                 tui_stage_begin(STAGE_EXECUTE);
-                last_exit = executor_run(pipeline);
-                tui_show_result(last_exit, NULL);
+                char output_buf[1024] = "";
+                last_exit = executor_run_capture(pipeline, output_buf, sizeof(output_buf));
+                tui_show_result(last_exit, output_buf[0] ? output_buf : NULL);
             }
 
             if (tui_is_debug()) {

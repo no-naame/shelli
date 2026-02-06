@@ -50,7 +50,7 @@ shelli is an educational shell implementation with a professional-grade terminal
 ### Build from source
 
 ```bash
-git clone https://github.com/yourusername/shelli.git
+git clone https://github.com/no-naame/shelli.git
 cd shelli
 make
 ./shelli

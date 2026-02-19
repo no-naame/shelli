@@ -60,6 +60,9 @@ const char *token_type_str(TokenType type) {
         case TOK_REDIR_IN:  return "REDIR_IN";
         case TOK_REDIR_OUT: return "REDIR_OUT";
         case TOK_REDIR_APP: return "REDIR_APP";
+        case TOK_SEMI:      return "SEMI";
+        case TOK_AND:       return "AND";
+        case TOK_OR:        return "OR";
         case TOK_EOF:       return "EOF";
         default:            return "UNKNOWN";
     }
@@ -82,9 +85,25 @@ int lexer_tokenize(const char *input, TokenList *list) {
                 goto done;
             } else if (isspace(c)) {
                 p++;
-            } else if (c == '|') {
-                if (tokenlist_add(list, TOK_PIPE, "|") < 0) goto error;
+            } else if (c == ';') {
+                if (tokenlist_add(list, TOK_SEMI, ";") < 0) goto error;
                 p++;
+            } else if (c == '&') {
+                if (*(p + 1) == '&') {
+                    if (tokenlist_add(list, TOK_AND, "&&") < 0) goto error;
+                    p += 2;
+                } else {
+                    /* Single & not supported, treat as error for now */
+                    goto error;
+                }
+            } else if (c == '|') {
+                if (*(p + 1) == '|') {
+                    if (tokenlist_add(list, TOK_OR, "||") < 0) goto error;
+                    p += 2;
+                } else {
+                    if (tokenlist_add(list, TOK_PIPE, "|") < 0) goto error;
+                    p++;
+                }
             } else if (c == '<') {
                 if (tokenlist_add(list, TOK_REDIR_IN, "<") < 0) goto error;
                 p++;
@@ -111,7 +130,7 @@ int lexer_tokenize(const char *input, TokenList *list) {
             break;
 
         case STATE_WORD:
-            if (c == '\0' || isspace(c) || c == '|' || c == '<' || c == '>') {
+            if (c == '\0' || isspace(c) || c == '|' || c == '<' || c == '>' || c == ';' || c == '&') {
                 /* End of word */
                 wordbuf[wordlen] = '\0';
                 if (tokenlist_add(list, TOK_WORD, wordbuf) < 0) goto error;

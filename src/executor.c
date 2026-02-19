@@ -227,13 +227,15 @@ int executor_run(Pipeline *pipeline) {
 static int execute_single_capture(Command *cmd, char *output, int output_size) {
     int is_builtin = builtin_is_builtin(cmd->argv[0]);
 
-    /* Special case: cd must run in parent process (can't fork) */
-    if (is_builtin && strcmp(cmd->argv[0], "cd") == 0) {
+    /* Special case: cd/export/unset must run in parent process */
+    if (is_builtin && (strcmp(cmd->argv[0], "cd") == 0 ||
+                       strcmp(cmd->argv[0], "export") == 0 ||
+                       strcmp(cmd->argv[0], "unset") == 0)) {
         int should_exit = 0;
         log_msg("builtin: %s", cmd->argv[0]);
         int ret = builtin_execute(cmd, &should_exit);
         if (output && output_size > 0) {
-            output[0] = '\0';  /* cd has no output */
+            output[0] = '\0';
         }
         return ret;
     }

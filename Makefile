@@ -20,6 +20,7 @@ SOURCES = $(SRCDIR)/main.c \
           $(SRCDIR)/parser.c \
           $(SRCDIR)/executor.c \
           $(SRCDIR)/builtins.c \
+          $(SRCDIR)/expand.c \
           $(TUIDIR)/tui_core.c \
           $(TUIDIR)/tui_input.c \
           $(TUIDIR)/tui_render.c \
@@ -33,6 +34,7 @@ HEADERS = $(SRCDIR)/lexer.h \
           $(SRCDIR)/parser.h \
           $(SRCDIR)/executor.h \
           $(SRCDIR)/builtins.h \
+          $(SRCDIR)/expand.h \
           $(TUIDIR)/tui.h
 
 # Object files
@@ -42,6 +44,7 @@ OBJECTS = $(OBJDIR)/main.o \
           $(OBJDIR)/parser.o \
           $(OBJDIR)/executor.o \
           $(OBJDIR)/builtins.o \
+          $(OBJDIR)/expand.o \
           $(OBJDIR)/tui_core.o \
           $(OBJDIR)/tui_input.o \
           $(OBJDIR)/tui_render.o \
@@ -85,11 +88,14 @@ $(OBJDIR)/executor.o: $(SRCDIR)/executor.c $(SRCDIR)/executor.h $(SRCDIR)/parser
 $(OBJDIR)/builtins.o: $(SRCDIR)/builtins.c $(SRCDIR)/builtins.h $(SRCDIR)/parser.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+$(OBJDIR)/expand.o: $(SRCDIR)/expand.c $(SRCDIR)/expand.h $(SRCDIR)/lexer.h | $(OBJDIR)
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Compile TUI source files
 $(OBJDIR)/tui_core.o: $(TUIDIR)/tui_core.c $(TUIDIR)/tui.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OBJDIR)/tui_input.o: $(TUIDIR)/tui_input.c $(TUIDIR)/tui.h | $(OBJDIR)
+$(OBJDIR)/tui_input.o: $(TUIDIR)/tui_input.c $(TUIDIR)/tui.h $(SRCDIR)/builtins.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(OBJDIR)/tui_render.o: $(TUIDIR)/tui_render.c $(TUIDIR)/tui.h $(SRCDIR)/lexer.h $(SRCDIR)/parser.h | $(OBJDIR)

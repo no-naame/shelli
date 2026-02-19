@@ -1,6 +1,6 @@
 /*
  * shelli - Educational Shell
- * builtins.c - Built-in commands: cd, pwd, exit, help
+ * builtins.c - Built-in commands: cd, pwd, exit, help, export, unset
  */
 
 #include <stdio.h>
@@ -10,21 +10,29 @@
 #include <errno.h>
 #include "builtins.h"
 
-static const char *builtins[] = {"cd", "pwd", "exit", "help", NULL};
+static const char *builtins[] = {"cd", "pwd", "exit", "help", "export", "unset", NULL};
 
 static const char *help_text =
     "shelli - Educational Shell\n"
     "\n"
     "Built-in commands:\n"
-    "  cd [dir]    Change directory (default: $HOME)\n"
-    "  pwd         Print working directory\n"
-    "  exit [n]    Exit shell with status n (default: 0)\n"
-    "  help        Show this help message\n"
+    "  cd [dir]       Change directory (default: $HOME)\n"
+    "  pwd            Print working directory\n"
+    "  exit [n]       Exit shell with status n (default: 0)\n"
+    "  help           Show this help message\n"
+    "  export VAR=val Set environment variable\n"
+    "  unset VAR      Remove environment variable\n"
     "\n"
     "Features:\n"
-    "  - Pipes: cmd1 | cmd2 | cmd3\n"
-    "  - Redirects: cmd < in.txt, cmd > out.txt, cmd >> log.txt\n"
-    "  - Quoting: 'single quotes', \"double quotes\"\n"
+    "  - Pipes:       cmd1 | cmd2 | cmd3\n"
+    "  - Redirects:   cmd < in.txt, cmd > out.txt, cmd >> log.txt\n"
+    "  - Quoting:     'single quotes', \"double quotes\"\n"
+    "  - Variables:   $VAR, ${VAR}, $? (last exit code)\n"
+    "  - Tilde:       ~/path expands to $HOME/path\n"
+    "  - Globbing:    *.c, file?.txt, [abc].txt\n"
+    "  - Semicolons:  cmd1 ; cmd2 (sequential execution)\n"
+    "  - Logic:       cmd1 && cmd2, cmd1 || cmd2\n"
+    "  - Tab:         Tab completion for commands and files\n"
     "\n"
     "Debug mode:\n"
     "  Run with --debug to see step-by-step execution\n";
@@ -77,6 +85,49 @@ static int builtin_exit(Command *cmd, int *should_exit) {
     return 0;
 }
 
+static int builtin_export(Command *cmd) {
+    if (cmd->argc < 2) {
+        /* No args: print all environment variables */
+        extern char **environ;
+        for (char **env = environ; *env; env++) {
+            printf("export %s\n", *env);
+        }
+        return 0;
+    }
+
+    for (int i = 1; i < cmd->argc; i++) {
+        char *eq = strchr(cmd->argv[i], '=');
+        if (eq) {
+            /* export VAR=value - split at = */
+            char *name = strdup(cmd->argv[i]);
+            name[eq - cmd->argv[i]] = '\0';
+            const char *value = eq + 1;
+            if (setenv(name, value, 1) < 0) {
+                fprintf(stderr, "export: %s: %s\n", name, strerror(errno));
+                free(name);
+                return 1;
+            }
+            free(name);
+        }
+    }
+    return 0;
+}
+
+static int builtin_unset(Command *cmd) {
+    if (cmd->argc < 2) {
+        fprintf(stderr, "unset: not enough arguments\n");
+        return 1;
+    }
+
+    for (int i = 1; i < cmd->argc; i++) {
+        if (unsetenv(cmd->argv[i]) < 0) {
+            fprintf(stderr, "unset: %s: %s\n", cmd->argv[i], strerror(errno));
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int do_help(void) {
     printf("%s", help_text);
     return 0;
@@ -93,6 +144,10 @@ int builtin_execute(Command *cmd, int *should_exit) {
         return builtin_exit(cmd, should_exit);
     } else if (strcmp(cmd->argv[0], "help") == 0) {
         return do_help();
+    } else if (strcmp(cmd->argv[0], "export") == 0) {
+        return builtin_export(cmd);
+    } else if (strcmp(cmd->argv[0], "unset") == 0) {
+        return builtin_unset(cmd);
     }
 
     return 1;

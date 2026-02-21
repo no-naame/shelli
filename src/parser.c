@@ -163,6 +163,16 @@ Pipeline *parser_parse(TokenList *tokens, char *error, int error_size) {
 
         case TOK_EOF:
             break;
+
+        case TOK_SEMI:
+        case TOK_AND:
+        case TOK_OR:
+            /* These are handled by main.c before parsing;
+             * they should never appear here */
+            snprintf(error, error_size, "Syntax error: unexpected '%s'",
+                     tok->value ? tok->value : "operator");
+            pipeline_free(pipeline);
+            return NULL;
         }
         i++;
     }

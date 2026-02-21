@@ -8,6 +8,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include "../builtins.h"
 #include "tui.h"
 
 /*
@@ -414,6 +417,278 @@ static void history_down(void) {
 }
 
 /*
+ * ============================================================================
+ * Tab completion
+ * ============================================================================
+ */
+
+#define MAX_COMPLETIONS 256
+#define MAX_COMPLETION_LEN 256
+
+/*
+ * Extract the word being completed and determine if it's the first word
+ * (command position) or a subsequent word (file position).
+ * Returns: pointer into buf where the current word starts.
+ */
+static int find_word_start(const char *buf, int cursor) {
+    int pos = cursor;
+    while (pos > 0 && buf[pos - 1] != ' ') {
+        pos--;
+    }
+    return pos;
+}
+
+static int is_command_position(const char *buf, int word_start) {
+    /* It's a command position if there's nothing before it (ignoring spaces),
+     * or if the previous non-space token is a pipe/semicolon/&&/|| */
+    int i = word_start - 1;
+    while (i >= 0 && buf[i] == ' ') i--;
+    if (i < 0) return 1; /* Beginning of line */
+    if (buf[i] == '|' || buf[i] == ';') return 1;
+    if (i > 0 && buf[i] == '&' && buf[i-1] == '&') return 1;
+    return 0;
+}
+
+/*
+ * Find executables in PATH matching a prefix.
+ */
+static int find_command_completions(const char *prefix, char completions[][MAX_COMPLETION_LEN], int max) {
+    int count = 0;
+    int prefix_len = (int)strlen(prefix);
+
+    /* Add matching builtins */
+    const char *builtin_names[] = {"cd", "pwd", "exit", "help", "export", "unset", NULL};
+    for (int i = 0; builtin_names[i] && count < max; i++) {
+        if (strncmp(builtin_names[i], prefix, prefix_len) == 0) {
+            strncpy(completions[count], builtin_names[i], MAX_COMPLETION_LEN - 1);
+            completions[count][MAX_COMPLETION_LEN - 1] = '\0';
+            count++;
+        }
+    }
+
+    /* Search PATH */
+    const char *path_env = getenv("PATH");
+    if (!path_env) return count;
+
+    char *path_copy = strdup(path_env);
+    char *dir = strtok(path_copy, ":");
+
+    while (dir && count < max) {
+        DIR *d = opendir(dir);
+        if (d) {
+            struct dirent *entry;
+            while ((entry = readdir(d)) != NULL && count < max) {
+                if (strncmp(entry->d_name, prefix, prefix_len) == 0) {
+                    /* Check it's executable */
+                    char full_path[4096];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
+                    struct stat st;
+                    if (stat(full_path, &st) == 0 && (st.st_mode & S_IXUSR)) {
+                        /* Check for duplicates */
+                        int dup = 0;
+                        for (int j = 0; j < count; j++) {
+                            if (strcmp(completions[j], entry->d_name) == 0) {
+                                dup = 1;
+                                break;
+                            }
+                        }
+                        if (!dup) {
+                            strncpy(completions[count], entry->d_name, MAX_COMPLETION_LEN - 1);
+                            completions[count][MAX_COMPLETION_LEN - 1] = '\0';
+                            count++;
+                        }
+                    }
+                }
+            }
+            closedir(d);
+        }
+        dir = strtok(NULL, ":");
+    }
+
+    free(path_copy);
+    return count;
+}
+
+/*
+ * Find files/directories matching a prefix.
+ */
+static int find_file_completions(const char *prefix, char completions[][MAX_COMPLETION_LEN], int max) {
+    int count = 0;
+
+    /* Split prefix into directory and file parts */
+    char dir_path[4096] = ".";
+    const char *file_prefix = prefix;
+    int prefix_len;
+
+    const char *last_slash = strrchr(prefix, '/');
+    if (last_slash) {
+        int dlen = (int)(last_slash - prefix);
+        if (dlen == 0) {
+            strcpy(dir_path, "/");
+        } else {
+            if (dlen >= (int)sizeof(dir_path)) dlen = sizeof(dir_path) - 1;
+            memcpy(dir_path, prefix, dlen);
+            dir_path[dlen] = '\0';
+        }
+        file_prefix = last_slash + 1;
+    }
+
+    /* Handle tilde in directory */
+    char expanded_dir[4096];
+    if (dir_path[0] == '~') {
+        const char *home = getenv("HOME");
+        if (home) {
+            snprintf(expanded_dir, sizeof(expanded_dir), "%s%s", home, dir_path + 1);
+        } else {
+            strncpy(expanded_dir, dir_path, sizeof(expanded_dir) - 1);
+        }
+    } else {
+        strncpy(expanded_dir, dir_path, sizeof(expanded_dir) - 1);
+    }
+    expanded_dir[sizeof(expanded_dir) - 1] = '\0';
+
+    prefix_len = (int)strlen(file_prefix);
+
+    DIR *d = opendir(expanded_dir);
+    if (!d) return 0;
+
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL && count < max) {
+        /* Skip hidden files unless prefix starts with . */
+        if (entry->d_name[0] == '.' && file_prefix[0] != '.') continue;
+
+        if (strncmp(entry->d_name, file_prefix, prefix_len) == 0) {
+            /* Build the completion (include the directory prefix) */
+            char completion[MAX_COMPLETION_LEN];
+            if (last_slash) {
+                int dlen = (int)(last_slash - prefix) + 1;
+                memcpy(completion, prefix, dlen);
+                completion[dlen] = '\0';
+                strncat(completion, entry->d_name, MAX_COMPLETION_LEN - dlen - 1);
+            } else {
+                strncpy(completion, entry->d_name, MAX_COMPLETION_LEN - 1);
+                completion[MAX_COMPLETION_LEN - 1] = '\0';
+            }
+
+            /* Append / for directories */
+            char full_path[4096];
+            snprintf(full_path, sizeof(full_path), "%s/%s", expanded_dir, entry->d_name);
+            struct stat st;
+            if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+                int clen = (int)strlen(completion);
+                if (clen < MAX_COMPLETION_LEN - 2) {
+                    completion[clen] = '/';
+                    completion[clen + 1] = '\0';
+                }
+            }
+
+            strncpy(completions[count], completion, MAX_COMPLETION_LEN - 1);
+            completions[count][MAX_COMPLETION_LEN - 1] = '\0';
+            count++;
+        }
+    }
+
+    closedir(d);
+    return count;
+}
+
+/*
+ * Find longest common prefix among completions
+ */
+static int common_prefix_len(char completions[][MAX_COMPLETION_LEN], int count) {
+    if (count <= 0) return 0;
+    if (count == 1) return (int)strlen(completions[0]);
+
+    int len = (int)strlen(completions[0]);
+    for (int i = 1; i < count; i++) {
+        int j = 0;
+        while (j < len && completions[i][j] == completions[0][j]) j++;
+        len = j;
+    }
+    return len;
+}
+
+/*
+ * Handle tab completion
+ */
+static void handle_tab(void) {
+    int word_start = find_word_start(editor.buf, editor.cursor);
+    int word_len = editor.cursor - word_start;
+
+    char prefix[MAX_COMPLETION_LEN];
+    if (word_len >= MAX_COMPLETION_LEN) word_len = MAX_COMPLETION_LEN - 1;
+    memcpy(prefix, editor.buf + word_start, word_len);
+    prefix[word_len] = '\0';
+
+    /* Get completions */
+    char completions[MAX_COMPLETIONS][MAX_COMPLETION_LEN];
+    int count;
+
+    if (is_command_position(editor.buf, word_start)) {
+        count = find_command_completions(prefix, completions, MAX_COMPLETIONS);
+    } else {
+        count = find_file_completions(prefix, completions, MAX_COMPLETIONS);
+    }
+
+    if (count == 0) return;
+
+    if (count == 1) {
+        /* Unique completion: replace the word */
+        const char *completion = completions[0];
+        int comp_len = (int)strlen(completion);
+
+        /* Remove old word */
+        memmove(editor.buf + word_start,
+                editor.buf + editor.cursor,
+                editor.len - editor.cursor + 1);
+        editor.len -= word_len;
+        editor.cursor = word_start;
+
+        /* Insert completion */
+        int insert_len = comp_len;
+        /* Add trailing space if not a directory (no trailing /) */
+        int add_space = (comp_len > 0 && completion[comp_len - 1] != '/') ? 1 : 0;
+
+        if (editor.len + insert_len + add_space < LINE_BUFFER_SIZE - 1) {
+            memmove(editor.buf + word_start + insert_len + add_space,
+                    editor.buf + word_start,
+                    editor.len - word_start + 1);
+            memcpy(editor.buf + word_start, completion, insert_len);
+            if (add_space) {
+                editor.buf[word_start + insert_len] = ' ';
+            }
+            editor.len += insert_len + add_space;
+            editor.cursor = word_start + insert_len + add_space;
+            editor.buf[editor.len] = '\0';
+        }
+    } else {
+        /* Multiple completions: complete to common prefix */
+        int cp_len = common_prefix_len(completions, count);
+
+        if (cp_len > word_len) {
+            /* We can extend the word */
+            memmove(editor.buf + word_start,
+                    editor.buf + editor.cursor,
+                    editor.len - editor.cursor + 1);
+            editor.len -= word_len;
+            editor.cursor = word_start;
+
+            if (editor.len + cp_len < LINE_BUFFER_SIZE - 1) {
+                memmove(editor.buf + word_start + cp_len,
+                        editor.buf + word_start,
+                        editor.len - word_start + 1);
+                memcpy(editor.buf + word_start, completions[0], cp_len);
+                editor.len += cp_len;
+                editor.cursor = word_start + cp_len;
+                editor.buf[editor.len] = '\0';
+            }
+        }
+        /* If can't extend further, just beep (ring bell) */
+        /* A future enhancement could show a completion list */
+    }
+}
+
+/*
  * Read a line of input with editing support
  */
 char *tui_read_line(void) {
@@ -515,6 +790,9 @@ char *tui_read_line(void) {
                 break;
 
             case KEY_TAB:
+                handle_tab();
+                break;
+
             case KEY_ESCAPE:
                 /* Ignore for now */
                 break;

@@ -13,6 +13,7 @@
 #include "parser.h"
 #include "executor.h"
 #include "builtins.h"
+#include "expand.h"
 
 static volatile sig_atomic_t interrupted = 0;
 
@@ -33,6 +34,63 @@ static void print_usage(const char *prog) {
     printf("  --help     Show this help message\n");
     printf("\n");
     printf("shelli is an educational shell that visualizes how shells work.\n");
+}
+
+/*
+ * Split a token list into segments separated by ;, &&, ||.
+ * Each segment is a pipeline. The separator type tells how to
+ * chain them (unconditional, and, or).
+ *
+ * Returns an array of (start_index, end_index, separator_after) triples.
+ */
+typedef struct {
+    int start;      /* First token index of this segment */
+    int end;        /* One past last token index */
+    TokenType sep;  /* Separator AFTER this segment (TOK_SEMI, TOK_AND, TOK_OR, TOK_EOF) */
+} Segment;
+
+static int split_segments(TokenList *tokens, Segment *segs, int max_segs) {
+    int count = 0;
+    int start = 0;
+
+    for (int i = 0; i < tokens->count; i++) {
+        TokenType t = tokens->tokens[i].type;
+        if (t == TOK_SEMI || t == TOK_AND || t == TOK_OR || t == TOK_EOF) {
+            if (i > start) {
+                /* Non-empty segment */
+                if (count >= max_segs) return count;
+                segs[count].start = start;
+                segs[count].end = i;
+                segs[count].sep = t;
+                count++;
+            }
+            start = i + 1;
+            if (t == TOK_EOF) break;
+        }
+    }
+
+    return count;
+}
+
+/*
+ * Create a sub-token-list from a range of tokens (shallow copy, no strdup).
+ * Adds a TOK_EOF at the end. Caller must free the tokens array but NOT the values.
+ */
+static TokenList make_sub_tokens(TokenList *src, int start, int end) {
+    TokenList sub;
+    int count = end - start;
+    sub.count = count + 1; /* +1 for EOF */
+    sub.capacity = sub.count;
+    sub.tokens = malloc(sub.count * sizeof(Token));
+
+    for (int i = 0; i < count; i++) {
+        sub.tokens[i].type = src->tokens[start + i].type;
+        sub.tokens[i].value = src->tokens[start + i].value; /* shallow */
+    }
+    sub.tokens[count].type = TOK_EOF;
+    sub.tokens[count].value = NULL;
+
+    return sub;
 }
 
 int main(int argc, char *argv[]) {
@@ -123,53 +181,95 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+        /* Expand words: tilde, variables, globs */
+        expand_set_exit_code(last_exit);
+        if (expand_words(&tokens) < 0) {
+            tui_show_error("Expansion error");
+            tokenlist_free(&tokens);
+            free(line);
+            continue;
+        }
+
         tui_show_tokens(&tokens);
 
         if (tui_is_debug()) {
             tui_wait_step("Tokenization complete");
         }
 
-        /* Parse */
-        char error[256] = "";
-        Pipeline *pipeline = parser_parse(&tokens, error, sizeof(error));
+        /* Split into segments by ; && || */
+        Segment segs[64];
+        int seg_count = split_segments(&tokens, segs, 64);
 
-        if (!pipeline && error[0]) {
-            tui_show_error(error);
+        if (seg_count == 0) {
             tokenlist_free(&tokens);
             free(line);
             continue;
         }
 
-        if (pipeline) {
-            tui_show_pipeline(pipeline);
-
-            if (tui_is_debug()) {
-                tui_wait_step("Parsing complete");
+        /* Execute each segment based on separator logic */
+        for (int s = 0; s < seg_count && !should_exit; s++) {
+            /* Check chaining condition from PREVIOUS separator */
+            if (s > 0) {
+                TokenType prev_sep = segs[s - 1].sep;
+                if (prev_sep == TOK_AND && last_exit != 0) {
+                    /* && but previous failed: skip */
+                    tui_log_exec("&& skip (previous failed)");
+                    continue;
+                }
+                if (prev_sep == TOK_OR && last_exit == 0) {
+                    /* || but previous succeeded: skip */
+                    tui_log_exec("|| skip (previous succeeded)");
+                    continue;
+                }
             }
 
-            /* Check if first command is exit (only for single command) */
-            if (pipeline->cmd_count == 1 &&
-                pipeline->first->argc > 0 &&
-                strcmp(pipeline->first->argv[0], "exit") == 0) {
+            /* Build a sub token list for this segment */
+            TokenList sub = make_sub_tokens(&tokens, segs[s].start, segs[s].end);
 
-                int dummy;
-                last_exit = builtin_execute(pipeline->first, &dummy);
-                should_exit = 1;
-                tui_log_exec("builtin: exit");
-                tui_show_result(last_exit, "Goodbye!");
-            } else {
-                /* Execute with output capture */
-                tui_stage_begin(STAGE_EXECUTE);
-                char output_buf[1024] = "";
-                last_exit = executor_run_capture(pipeline, output_buf, sizeof(output_buf));
-                tui_show_result(last_exit, output_buf[0] ? output_buf : NULL);
+            /* Parse this segment */
+            char error[256] = "";
+            Pipeline *pipeline = parser_parse(&sub, error, sizeof(error));
+
+            if (!pipeline && error[0]) {
+                tui_show_error(error);
+                free(sub.tokens);
+                break;
             }
 
-            if (tui_is_debug()) {
-                tui_wait_step("Execution complete");
+            if (pipeline) {
+                tui_show_pipeline(pipeline);
+
+                if (tui_is_debug()) {
+                    tui_wait_step("Parsing complete");
+                }
+
+                /* Check if first command is exit (only for single command) */
+                if (pipeline->cmd_count == 1 &&
+                    pipeline->first->argc > 0 &&
+                    strcmp(pipeline->first->argv[0], "exit") == 0) {
+
+                    int dummy;
+                    last_exit = builtin_execute(pipeline->first, &dummy);
+                    should_exit = 1;
+                    tui_log_exec("builtin: exit");
+                    tui_show_result(last_exit, "Goodbye!");
+                } else {
+                    /* Execute with output capture */
+                    tui_stage_begin(STAGE_EXECUTE);
+                    char output_buf[1024] = "";
+                    last_exit = executor_run_capture(pipeline, output_buf, sizeof(output_buf));
+                    expand_set_exit_code(last_exit);
+                    tui_show_result(last_exit, output_buf[0] ? output_buf : NULL);
+                }
+
+                if (tui_is_debug()) {
+                    tui_wait_step("Execution complete");
+                }
+
+                pipeline_free(pipeline);
             }
 
-            pipeline_free(pipeline);
+            free(sub.tokens); /* shallow copy, don't free values */
         }
 
         tokenlist_free(&tokens);

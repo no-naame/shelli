@@ -32,7 +32,15 @@ static void log_msg(const char *fmt, ...) {
 }
 
 static int setup_redirects(Command *cmd) {
-    /* Input redirect */
+    /* Heredoc: pipe read-end provides stdin */
+    if (cmd->heredoc_fd >= 0) {
+        log_msg("  redirect: stdin ◄── <<heredoc (fd %d)", cmd->heredoc_fd);
+        dup2(cmd->heredoc_fd, STDIN_FILENO);
+        close(cmd->heredoc_fd);
+        cmd->heredoc_fd = -1;
+    }
+
+    /* Input redirect (overrides heredoc if both somehow specified) */
     if (cmd->redir_in.type == REDIR_IN) {
         int fd = open(cmd->redir_in.filename, O_RDONLY);
         if (fd < 0) {

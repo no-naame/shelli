@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 #include "parser.h"
 
 #define MAX_ARGS 256
@@ -28,6 +29,7 @@ static Command *command_new(void) {
         free(cmd);
         return NULL;
     }
+    cmd->heredoc_fd = -1;
     return cmd;
 }
 
@@ -39,6 +41,8 @@ static void command_free(Command *cmd) {
     free(cmd->argv);
     free(cmd->redir_in.filename);
     free(cmd->redir_out.filename);
+    free(cmd->heredoc_delim);
+    if (cmd->heredoc_fd >= 0) close(cmd->heredoc_fd);
     free(cmd);
 }
 
@@ -129,6 +133,24 @@ Pipeline *parser_parse(TokenList *tokens, char *error, int error_size) {
             }
             last = current;
             current = NULL;
+            break;
+
+        case TOK_HEREDOC:
+            if (!current) {
+                snprintf(error, error_size, "Syntax error: heredoc without command");
+                pipeline_free(pipeline);
+                return NULL;
+            }
+            /* Next WORD token is the delimiter */
+            i++;
+            if (i >= tokens->count || tokens->tokens[i].type != TOK_WORD) {
+                snprintf(error, error_size, "Syntax error: missing heredoc delimiter");
+                pipeline_free(pipeline);
+                return NULL;
+            }
+            free(current->heredoc_delim);
+            current->heredoc_delim = strdup(tokens->tokens[i].value);
+            /* heredoc_fd will be filled in by main.c before execution */
             break;
 
         case TOK_REDIR_IN:

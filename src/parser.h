@@ -13,6 +13,7 @@
 #define REDIR_IN     1  /* < */
 #define REDIR_OUT    2  /* > */
 #define REDIR_APPEND 3  /* >> */
+#define REDIR_HEREDOC 4 /* << */
 
 typedef struct {
     int type;           /* REDIR_NONE, REDIR_IN, REDIR_OUT, REDIR_APPEND */
@@ -24,6 +25,8 @@ typedef struct Command {
     int argc;
     Redirect redir_in;  /* Input redirection */
     Redirect redir_out; /* Output redirection */
+    char *heredoc_delim; /* Delimiter word for << (NULL if none) */
+    int   heredoc_fd;    /* Pipe read-end fd filled in by main.c (-1 if none) */
     struct Command *next; /* Next command in pipeline */
 } Command;
 

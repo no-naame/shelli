@@ -242,3 +242,18 @@ static const char *SPINNER_FRAMES[] = {
 const char *tui_spinner_frame(int frame) {
     return SPINNER_FRAMES[frame % SPINNER_FRAME_COUNT];
 }
+
+/*
+ * Temporarily leave raw mode (e.g. for heredoc line reading).
+ * The caller must call tui_resume_raw() when done.
+ */
+void tui_suspend_raw(void) {
+    exit_raw_mode();
+}
+
+/*
+ * Re-enter raw mode after tui_suspend_raw().
+ */
+void tui_resume_raw(void) {
+    enter_raw_mode();
+}

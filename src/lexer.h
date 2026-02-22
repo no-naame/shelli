@@ -12,6 +12,7 @@ typedef enum {
     TOK_REDIR_IN,   /* < */
     TOK_REDIR_OUT,  /* > */
     TOK_REDIR_APP,  /* >> */
+    TOK_HEREDOC,    /* << DELIMITER (value holds the delimiter word) */
     TOK_SEMI,       /* ; */
     TOK_AND,        /* && */
     TOK_OR,         /* || */

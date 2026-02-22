@@ -131,6 +131,10 @@ int tui_init(void);
 /* Cleanup and restore terminal state */
 void tui_cleanup(void);
 
+/* Temporarily leave/re-enter raw mode (for heredoc line reading) */
+void tui_suspend_raw(void);
+void tui_resume_raw(void);
+
 /* Get terminal dimensions */
 void tui_get_size(int *width, int *height);
 
@@ -148,6 +152,15 @@ void tui_draw_frame(void);
 
 /* Read a line of input with full editing support */
 char *tui_read_line(void);
+
+/* History persistence */
+void tui_history_load(void);
+void tui_history_save(void);
+
+/* History access (for builtin and !n/!! expansion) */
+const char *tui_history_get(int n);   /* 1-based index */
+int  tui_history_count(void);
+void tui_history_print(void);
 
 /*
  * ============================================================================

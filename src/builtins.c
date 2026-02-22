@@ -9,8 +9,9 @@
 #include <unistd.h>
 #include <errno.h>
 #include "builtins.h"
+#include "tui/tui.h"
 
-static const char *builtins[] = {"cd", "pwd", "exit", "help", "export", "unset", NULL};
+static const char *builtins[] = {"cd", "pwd", "exit", "help", "export", "unset", "history", NULL};
 
 static const char *help_text =
     "shelli - Educational Shell\n"
@@ -22,6 +23,11 @@ static const char *help_text =
     "  help           Show this help message\n"
     "  export VAR=val Set environment variable\n"
     "  unset VAR      Remove environment variable\n"
+    "  history        Show command history\n"
+    "\n"
+    "History expansion:\n"
+    "  !!             Repeat last command\n"
+    "  !n             Repeat command number n\n"
     "\n"
     "Features:\n"
     "  - Pipes:       cmd1 | cmd2 | cmd3\n"
@@ -133,6 +139,11 @@ static int do_help(void) {
     return 0;
 }
 
+static int builtin_history(void) {
+    tui_history_print();
+    return 0;
+}
+
 int builtin_execute(Command *cmd, int *should_exit) {
     *should_exit = 0;
 
@@ -148,6 +159,8 @@ int builtin_execute(Command *cmd, int *should_exit) {
         return builtin_export(cmd);
     } else if (strcmp(cmd->argv[0], "unset") == 0) {
         return builtin_unset(cmd);
+    } else if (strcmp(cmd->argv[0], "history") == 0) {
+        return builtin_history();
     }
 
     return 1;

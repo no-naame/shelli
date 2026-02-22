@@ -383,6 +383,79 @@ static void history_add(const char *line) {
 }
 
 /*
+ * Load history from ~/.shelli_history
+ */
+void tui_history_load(void) {
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/.shelli_history", home);
+
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+
+    char line[LINE_BUFFER_SIZE];
+    while (fgets(line, sizeof(line), f)) {
+        /* Strip trailing newline */
+        int len = (int)strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+        if (len > 0) {
+            history_add(line);
+        }
+    }
+
+    fclose(f);
+}
+
+/*
+ * Save history to ~/.shelli_history
+ */
+void tui_history_save(void) {
+    const char *home = getenv("HOME");
+    if (!home) return;
+
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/.shelli_history", home);
+
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+
+    for (int i = 0; i < editor.hist_count; i++) {
+        fprintf(f, "%s\n", editor.history[i]);
+    }
+
+    fclose(f);
+}
+
+/*
+ * Get a history entry by 1-based index (for !n expansion)
+ * Returns NULL if out of range.
+ */
+const char *tui_history_get(int n) {
+    if (n < 1 || n > editor.hist_count) return NULL;
+    return editor.history[n - 1];
+}
+
+/*
+ * Get total number of history entries
+ */
+int tui_history_count(void) {
+    return editor.hist_count;
+}
+
+/*
+ * Print all history entries (for `history` builtin)
+ */
+void tui_history_print(void) {
+    for (int i = 0; i < editor.hist_count; i++) {
+        printf("%4d  %s\n", i + 1, editor.history[i]);
+    }
+}
+
+/*
  * Navigate history up
  */
 static void history_up(void) {
@@ -457,7 +530,7 @@ static int find_command_completions(const char *prefix, char completions[][MAX_C
     int prefix_len = (int)strlen(prefix);
 
     /* Add matching builtins */
-    const char *builtin_names[] = {"cd", "pwd", "exit", "help", "export", "unset", NULL};
+    const char *builtin_names[] = {"cd", "pwd", "exit", "help", "export", "unset", "history", NULL};
     for (int i = 0; builtin_names[i] && count < max; i++) {
         if (strncmp(builtin_names[i], prefix, prefix_len) == 0) {
             strncpy(completions[count], builtin_names[i], MAX_COMPLETION_LEN - 1);

@@ -26,6 +26,116 @@ static void exec_logger(const char *message) {
     tui_log_exec(message);
 }
 
+/*
+ * For any command in the pipeline that has a heredoc_delim, collect lines
+ * from the user until the delimiter line is seen, then write them into a pipe
+ * and leave the read-end in cmd->heredoc_fd.
+ *
+ * We temporarily leave raw mode so fgets() works normally.
+ * Returns 0 on success, -1 on error.
+ */
+static int collect_heredocs(Pipeline *pipeline) {
+    int found = 0;
+    for (Command *cmd = pipeline->first; cmd; cmd = cmd->next) {
+        if (cmd->heredoc_delim) { found = 1; break; }
+    }
+    if (!found) return 0;
+
+    /* Leave raw mode so the terminal is in normal line-reading mode */
+    tui_suspend_raw();
+
+    for (Command *cmd = pipeline->first; cmd; cmd = cmd->next) {
+        if (!cmd->heredoc_delim) continue;
+
+        int pipefd[2];
+        if (pipe(pipefd) < 0) {
+            perror("pipe");
+            tui_resume_raw();
+            return -1;
+        }
+
+        /* Prompt and collect lines until delimiter */
+        char linebuf[4096];
+        while (1) {
+            printf("heredoc> ");
+            fflush(stdout);
+
+            if (!fgets(linebuf, sizeof(linebuf), stdin)) {
+                /* EOF — stop reading */
+                break;
+            }
+
+            /* Strip trailing newline for delimiter comparison */
+            int len = (int)strlen(linebuf);
+            if (len > 0 && linebuf[len - 1] == '\n') {
+                linebuf[len - 1] = '\0';
+                len--;
+            }
+
+            if (strcmp(linebuf, cmd->heredoc_delim) == 0) {
+                break;  /* Delimiter line reached */
+            }
+
+            /* Write the line (with newline) to the pipe */
+            linebuf[len] = '\n';
+            linebuf[len + 1] = '\0';
+            write(pipefd[1], linebuf, len + 1);
+        }
+
+        close(pipefd[1]);  /* Signal EOF to the reader */
+        cmd->heredoc_fd = pipefd[0];
+    }
+
+    tui_resume_raw();
+    return 0;
+}
+
+/*
+ * Expand history references in a line:
+ *   !!   -> last command
+ *   !n   -> command number n (1-based)
+ *
+ * Returns a newly allocated string (caller must free), or NULL on error.
+ * If no expansion needed, returns strdup of the original line.
+ */
+static char *expand_history(const char *line) {
+    if (line[0] != '!') {
+        return strdup(line);
+    }
+
+    const char *ref = line + 1;
+    const char *replacement = NULL;
+    int count = tui_history_count();
+
+    if (ref[0] == '!') {
+        /* !! -> last command */
+        if (count == 0) {
+            fprintf(stderr, "shelli: !!: no previous command\n");
+            return NULL;
+        }
+        replacement = tui_history_get(count);
+    } else {
+        /* !n -> command number n */
+        char *endptr;
+        long n = strtol(ref, &endptr, 10);
+        if (*endptr != '\0' || n < 1) {
+            fprintf(stderr, "shelli: !%s: unknown history reference\n", ref);
+            return NULL;
+        }
+        replacement = tui_history_get((int)n);
+        if (!replacement) {
+            fprintf(stderr, "shelli: !%ld: event not found\n", n);
+            return NULL;
+        }
+    }
+
+    /* Echo the expanded command so the user sees what runs */
+    printf("%s\n", replacement);
+    fflush(stdout);
+
+    return strdup(replacement);
+}
+
 static void print_usage(const char *prog) {
     printf("Usage: %s [OPTIONS]\n", prog);
     printf("\n");
@@ -119,6 +229,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* Load history from disk */
+    tui_history_load();
+
     /* Set up signal handling (after TUI init to ensure cleanup works) */
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
@@ -158,6 +271,17 @@ int main(int argc, char *argv[]) {
         if (line[0] == '\0') {
             free(line);
             continue;
+        }
+
+        /* Expand history references: !! and !n */
+        if (line[0] == '!') {
+            char *expanded = expand_history(line);
+            free(line);
+            if (!expanded) {
+                /* Error already printed; show it in TUI too */
+                continue;
+            }
+            line = expanded;
         }
 
         /* Clear all processing panels NOW - after user entered a new command */
@@ -243,6 +367,13 @@ int main(int argc, char *argv[]) {
                     tui_wait_step("Parsing complete");
                 }
 
+                /* Collect heredoc body from user if any << operator was used */
+                if (collect_heredocs(pipeline) < 0) {
+                    pipeline_free(pipeline);
+                    free(sub.tokens);
+                    break;
+                }
+
                 /* Check if first command is exit (only for single command) */
                 if (pipeline->cmd_count == 1 &&
                     pipeline->first->argc > 0 &&
@@ -275,6 +406,9 @@ int main(int argc, char *argv[]) {
         tokenlist_free(&tokens);
         free(line);
     }
+
+    /* Save history to disk before exit */
+    tui_history_save();
 
     /* Cleanup TUI (restores terminal) */
     tui_cleanup();

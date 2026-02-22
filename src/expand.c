@@ -1,11 +1,12 @@
 /*
  * shelli - Educational Shell
- * expand.c - Word expansion: tilde, environment variables, globbing
+ * expand.c - Word expansion: tilde, environment variables, arithmetic, globbing
  *
  * Expansion order (matching real shells):
- *   1. Tilde expansion   (~  → /home/user)
- *   2. Variable expansion ($VAR → value)
- *   3. Glob expansion     (*.c  → file1.c file2.c)
+ *   1. Tilde expansion       (~  → /home/user)
+ *   2. Variable expansion    ($VAR → value)
+ *   3. Arithmetic expansion  $(( expr )) → numeric result
+ *   4. Glob expansion        (*.c  → file1.c file2.c)
  */
 
 #include <stdlib.h>
@@ -20,6 +21,183 @@ static int last_exit_code = 0;
 
 void expand_set_exit_code(int code) {
     last_exit_code = code;
+}
+
+/*
+ * ============================================================================
+ * Arithmetic expression evaluator for $(( expr ))
+ *
+ * Grammar (precedence, low → high):
+ *   expr     ::= additive
+ *   additive ::= multiplicative (('+' | '-') multiplicative)*
+ *   multi    ::= power    (('*' | '/' | '%') power)*
+ *   power    ::= unary    ('**' unary)*
+ *   unary    ::= '-' unary | primary
+ *   primary  ::= '(' expr ')' | NUMBER | '$'VARNAME | VARNAME
+ * ============================================================================
+ */
+
+typedef struct {
+    const char *p;  /* current position in expression string */
+    int error;      /* non-zero if a parse/eval error occurred */
+} ArithState;
+
+static long arith_expr(ArithState *s);  /* forward declaration */
+
+static void arith_skip_ws(ArithState *s) {
+    while (*s->p == ' ' || *s->p == '\t') s->p++;
+}
+
+static long arith_primary(ArithState *s) {
+    arith_skip_ws(s);
+
+    if (*s->p == '(') {
+        s->p++;
+        long val = arith_expr(s);
+        arith_skip_ws(s);
+        if (*s->p == ')') {
+            s->p++;
+        } else {
+            s->error = 1;
+        }
+        return val;
+    }
+
+    /* Variable reference: $NAME or bare NAME (common in arithmetic) */
+    const char *var_start = NULL;
+    if (*s->p == '$') {
+        s->p++;
+        var_start = s->p;
+    } else if (isalpha((unsigned char)*s->p) || *s->p == '_') {
+        var_start = s->p;
+    }
+
+    if (var_start) {
+        while (isalnum((unsigned char)*s->p) || *s->p == '_') s->p++;
+        int namelen = (int)(s->p - var_start);
+        char name[256];
+        if (namelen > 0 && namelen < (int)sizeof(name)) {
+            memcpy(name, var_start, namelen);
+            name[namelen] = '\0';
+            const char *val = getenv(name);
+            if (val) {
+                char *end;
+                long n = strtol(val, &end, 10);
+                if (*end == '\0') return n;
+            }
+        }
+        return 0;
+    }
+
+    /* Number (decimal, hex 0x..., octal 0...) */
+    if (isdigit((unsigned char)*s->p)) {
+        char *end;
+        long val = strtol(s->p, &end, 0);
+        s->p = end;
+        return val;
+    }
+
+    s->error = 1;
+    return 0;
+}
+
+static long arith_unary(ArithState *s) {
+    arith_skip_ws(s);
+    if (*s->p == '-') {
+        s->p++;
+        return -arith_unary(s);
+    }
+    if (*s->p == '+') {
+        s->p++;
+        return arith_unary(s);
+    }
+    if (*s->p == '~') {
+        s->p++;
+        return ~arith_unary(s);
+    }
+    if (*s->p == '!') {
+        s->p++;
+        return !arith_unary(s);
+    }
+    return arith_primary(s);
+}
+
+static long arith_power(ArithState *s) {
+    long base = arith_unary(s);
+    arith_skip_ws(s);
+    if (s->p[0] == '*' && s->p[1] == '*') {
+        s->p += 2;
+        long exp = arith_power(s);  /* right-associative */
+        if (exp < 0) { s->error = 1; return 0; }
+        long result = 1;
+        for (long i = 0; i < exp; i++) result *= base;
+        return result;
+    }
+    return base;
+}
+
+static long arith_multiplicative(ArithState *s) {
+    long left = arith_power(s);
+    while (!s->error) {
+        arith_skip_ws(s);
+        /* Careful: don't consume ** as a single * */
+        if (*s->p == '*' && s->p[1] != '*') {
+            s->p++;
+            left *= arith_power(s);
+        } else if (*s->p == '/') {
+            s->p++;
+            long right = arith_power(s);
+            if (right == 0) { s->error = 1; return 0; }
+            left /= right;
+        } else if (*s->p == '%') {
+            s->p++;
+            long right = arith_power(s);
+            if (right == 0) { s->error = 1; return 0; }
+            left %= right;
+        } else {
+            break;
+        }
+    }
+    return left;
+}
+
+static long arith_additive(ArithState *s) {
+    long left = arith_multiplicative(s);
+    while (!s->error) {
+        arith_skip_ws(s);
+        if (*s->p == '+') {
+            s->p++;
+            left += arith_multiplicative(s);
+        } else if (*s->p == '-') {
+            s->p++;
+            left -= arith_multiplicative(s);
+        } else {
+            break;
+        }
+    }
+    return left;
+}
+
+static long arith_expr(ArithState *s) {
+    return arith_additive(s);
+}
+
+/*
+ * Evaluate an arithmetic expression string.
+ * Returns the result as a long; sets *ok=0 on error.
+ */
+static long arith_evaluate(const char *expr, int *ok) {
+    ArithState s;
+    s.p = expr;
+    s.error = 0;
+    long result = arith_expr(&s);
+    arith_skip_ws(&s);
+    if (s.error || (*s.p != '\0')) {
+        *ok = 0;
+        return 0;
+    }
+    *ok = 1;
+    return result;
 }
 
 /*
@@ -47,7 +225,7 @@ static char *expand_tilde(const char *word) {
 }
 
 /*
- * Variable expansion: replace $VAR, ${VAR}, $? in a word
+ * Variable and arithmetic expansion: replace $VAR, ${VAR}, $?, $((...)) in a word
  */
 static char *expand_variables(const char *word) {
     /* Quick check: does this word contain a $ at all? */
@@ -60,7 +238,52 @@ static char *expand_variables(const char *word) {
     while (*p && rlen < (int)sizeof(result) - 1) {
         if (*p == '$') {
             p++;
-            if (*p == '?') {
+            if (*p == '(') {
+                /* Could be $(( expr )) */
+                if (*(p + 1) == '(') {
+                    p += 2; /* skip (( */
+                    /* Find matching )) */
+                    const char *expr_start = p;
+                    int depth = 1;
+                    while (*p && depth > 0) {
+                        if (*p == '(' ) depth++;
+                        else if (*p == ')') {
+                            depth--;
+                            if (depth == 0) break;
+                        }
+                        p++;
+                    }
+                    int exprlen = (int)(p - expr_start);
+                    char expr[1024];
+                    if (exprlen < (int)sizeof(expr)) {
+                        memcpy(expr, expr_start, exprlen);
+                        expr[exprlen] = '\0';
+                        int ok = 0;
+                        long val = arith_evaluate(expr, &ok);
+                        if (ok) {
+                            char num[32];
+                            snprintf(num, sizeof(num), "%ld", val);
+                            int nlen = (int)strlen(num);
+                            if (rlen + nlen < (int)sizeof(result) - 1) {
+                                memcpy(result + rlen, num, nlen);
+                                rlen += nlen;
+                            }
+                        } else {
+                            /* On error, substitute empty string */
+                            fprintf(stderr, "shelli: arithmetic error: %.*s\n",
+                                    exprlen, expr_start);
+                        }
+                    }
+                    /* Skip closing )) */
+                    if (*p == ')') p++;
+                    if (*p == ')') p++;
+                } else {
+                    /* Plain $(  — not supported yet, emit literal */
+                    result[rlen++] = '$';
+                    result[rlen++] = '(';
+                    p++;
+                }
+            } else if (*p == '?') {
                 /* $? - last exit code */
                 char num[16];
                 snprintf(num, sizeof(num), "%d", last_exit_code);
@@ -92,10 +315,10 @@ static char *expand_variables(const char *word) {
                     }
                     p++; /* skip } */
                 }
-            } else if (isalpha(*p) || *p == '_') {
+            } else if (isalpha((unsigned char)*p) || *p == '_') {
                 /* $VAR */
                 const char *start = p;
-                while (isalnum(*p) || *p == '_') p++;
+                while (isalnum((unsigned char)*p) || *p == '_') p++;
                 int namelen = (int)(p - start);
                 char name[256];
                 if (namelen < (int)sizeof(name)) {

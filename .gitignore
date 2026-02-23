@@ -29,3 +29,6 @@ shelli
 # Temporary files
 *.tmp
 *.temp
+
+# Claude Code
+.claude/

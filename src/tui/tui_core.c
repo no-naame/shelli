@@ -1,6 +1,9 @@
 /*
  * shelli - Educational Shell
  * tui/tui_core.c - Terminal control (raw mode, alternate buffer)
+ *
+ * Phase 0: Flag-based SIGWINCH handler (async-signal-safe)
+ * Phase 9: Resize recomputation
  */
 
 #include <stdio.h>
@@ -21,6 +24,9 @@ static int alt_screen_enabled = 0;
 static int term_width = 80;
 static int term_height = 24;
 
+/* Flag-based resize handling (async-signal-safe) */
+static volatile sig_atomic_t resize_flag = 0;
+
 /* Forward declarations for internal functions */
 void splash_draw(int width, int height);
 void splash_animate(int width, int height, int frame);
@@ -38,12 +44,31 @@ static void update_size(void) {
 
 /*
  * SIGWINCH handler for terminal resize
+ * Only sets a flag (async-signal-safe). Actual resize handling
+ * happens in the main loop via tui_resize_pending()/tui_handle_resize().
  */
 static void handle_winch(int sig) {
     (void)sig;
+    resize_flag = 1;
+}
+
+/*
+ * Check if a resize is pending
+ */
+int tui_resize_pending(void) {
+    return resize_flag;
+}
+
+/*
+ * Handle pending resize: update dimensions and redraw
+ */
+void tui_handle_resize(void) {
+    if (!resize_flag) return;
+    resize_flag = 0;
     update_size();
-    /* Redraw frame on resize */
-    tui_draw_frame();
+    /* Clear screen to avoid artifacts from old layout */
+    printf(SCR_CLEAR);
+    fflush(stdout);
 }
 
 /*
@@ -134,15 +159,15 @@ int tui_init(void) {
         return -1;
     }
 
-    /* Set up SIGWINCH handler */
+    /* Set up SIGWINCH handler (flag-based, async-signal-safe) */
     struct sigaction sa;
     sa.sa_handler = handle_winch;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGWINCH, &sa, NULL);
 
-    /* Clear screen */
-    printf(BG_BASE);
+    /* Clear screen with base background */
+    printf(CSI "48;5;%dm", COL_BASE);
     printf(SCR_CLEAR);
     printf(CUR_HOME);
     fflush(stdout);

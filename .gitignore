@@ -32,3 +32,9 @@ shelli
 
 # Claude Code
 .claude/
+
+# LaTeX build artifacts
+report.aux
+report.out
+report.tex
+Report format .md
